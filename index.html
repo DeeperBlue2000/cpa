@@ -115,7 +115,10 @@ h1 em{font-style:normal;color:var(--gold)}
 #q::-webkit-search-cancel-button{display:none}
 .clear-q{position:absolute;right:6px;width:30px;height:30px;border-radius:10px;color:var(--muted);font-size:16px;display:none;place-items:center}
 .clear-q.show{display:grid}
-.filters{display:flex;gap:6px;margin-top:8px}
+
+/* filtros/navegação por grupo rolam junto com a página — só a busca fica fixa */
+.filterBar{padding:10px var(--pad) 10px;border-bottom:1px solid var(--line)}
+.filters{display:flex;gap:6px}
 .filters button{
   flex:1;padding:8px 2px;border-radius:12px;font-size:12.5px;font-weight:700;color:var(--muted);
   background:var(--surface);border:1px solid var(--line);font-variant-numeric:tabular-nums;
@@ -140,7 +143,7 @@ main{padding:6px var(--pad) 30px;max-width:760px;margin:0 auto}
 .gdiv::after{content:"";flex:1;height:1px;background:var(--line)}
 section.team{
   background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);
-  margin-bottom:10px;scroll-margin-top:150px;overflow:hidden;
+  margin-bottom:10px;scroll-margin-top:calc(78px + env(safe-area-inset-top));overflow:hidden;
 }
 section.team.done{border-color:rgba(233,200,119,.4)}
 .t-head{width:100%;display:flex;align-items:center;gap:11px;padding:13px 14px;text-align:left}
@@ -192,7 +195,7 @@ section.team.done{border-color:rgba(233,200,119,.4)}
 .slot.dup .badge{display:inline-flex}
 @keyframes paste{0%{transform:scale(.78) rotate(-3deg)}60%{transform:scale(1.05) rotate(.6deg)}100%{transform:scale(1)}}
 .slot.pop{animation:paste .2s ease-out}
-.slot.hidden,section.team.hidden,.gdiv.hidden{display:none}
+.slot.hidden,section.team.hidden,.gdiv.hidden,.grid.hidden{display:none}
 
 .empty{padding:44px 20px;text-align:center;color:var(--muted);font-size:14px}
 .empty b{color:var(--ink)}
@@ -217,6 +220,13 @@ dialog::backdrop{background:rgba(4,10,7,.6);-webkit-backdrop-filter:blur(3px);ba
 .sheet .act.warn{color:var(--danger)}
 .sheet hr{border:0;border-top:1px solid var(--line);margin:6px 0}
 .sheet .note{font-size:11.5px;color:var(--faint);padding:10px 10px 2px;line-height:1.5}
+.recent{max-height:38vh;overflow-y:auto;-webkit-overflow-scrolling:touch;margin:2px 2px 4px}
+.recent-row{display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid var(--line)}
+.recent-row:last-child{border-bottom:0}
+.r-flag{flex:none;width:22px;text-align:center;font-size:17px}
+.r-info{flex:1;min-width:0;font-size:13px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.r-info b{color:var(--gold);font-weight:800;margin-right:7px}
+.r-time{flex:none;font-size:11px;color:var(--faint);font-variant-numeric:tabular-nums}
 .confirm{border-radius:22px;padding:20px 18px calc(18px + env(safe-area-inset-bottom));background:var(--surface);border:1px solid var(--line-strong);margin-bottom:18px}
 .confirm p{font-size:14.5px;color:var(--muted);margin:8px 2px 16px;line-height:1.5}
 .confirm p b{color:var(--ink)}
@@ -271,6 +281,9 @@ dialog::backdrop{background:rgba(4,10,7,.6);-webkit-backdrop-filter:blur(3px);ba
     <input id="q" type="search" placeholder="Buscar jogador, seleção ou código (ex.: BRA 14)" autocomplete="off" aria-label="Buscar figurinhas">
     <button class="clear-q" id="clearQ" aria-label="Limpar busca">✕</button>
   </div>
+</div>
+
+<div class="filterBar">
   <div class="filters" role="group" aria-label="Filtrar figurinhas">
     <button data-f="all"  aria-pressed="true">Todas<small id="cAll">980</small></button>
     <button data-f="miss" aria-pressed="false">Faltam<small id="cMiss">980</small></button>
@@ -288,6 +301,10 @@ dialog::backdrop{background:rgba(4,10,7,.6);-webkit-backdrop-filter:blur(3px);ba
 <dialog id="menu" aria-label="Backup e listas">
   <div class="sheet">
     <div class="grab"></div>
+    <h2>Últimas adicionadas</h2>
+    <div class="recent" id="recentList"></div>
+    <p class="note" id="recentEmpty" hidden>Toque numa figurinha para começar a registrar sua atividade aqui.</p>
+    <hr>
     <h2>Backup &amp; listas de troca</h2>
     <button class="act" id="aShareMiss"><span class="i">📋</span>Compartilhar lista de faltantes</button>
     <button class="act" id="aShareDup"><span class="i">🔁</span>Compartilhar lista de repetidas</button>
@@ -438,7 +455,9 @@ if (typeof document==="undefined") return; // permite teste em Node
 
 /* ═══════════════════════ 2 · ESTADO ═══════════════════════ */
 const KEY="copa2026-tracker-v1";
+const HIST_MAX=300;                       // teto de eventos guardados
 let counts=Object.create(null);           // id -> nº de unidades
+let history=[];                           // {id,t} — registro de adições, mais antigo primeiro
 let canStore=false;
 try{ localStorage.setItem("__t","1"); localStorage.removeItem("__t"); canStore=true; }catch(e){}
 if (canStore){
@@ -448,6 +467,8 @@ if (canStore){
       if (d && typeof d.counts==="object")
         for (const [id,v] of Object.entries(d.counts))
           if (byId.has(id) && Number.isInteger(v) && v>0) counts[id]=Math.min(v,99);
+      if (d && Array.isArray(d.history))
+        history=d.history.filter(h=>h && byId.has(h.id) && Number.isFinite(h.t)).slice(-HIST_MAX);
     }
   }catch(e){ console.warn("Backup local ilegível",e); }
 } else document.getElementById("storeBanner").hidden=false;
@@ -457,11 +478,11 @@ function save(){
   if(!canStore) return;
   clearTimeout(saveT);
   saveT=setTimeout(()=>{ try{
-    localStorage.setItem(KEY,JSON.stringify({app:"copa2026",v:1,savedAt:new Date().toISOString(),counts}));
+    localStorage.setItem(KEY,JSON.stringify({app:"copa2026",v:1,savedAt:new Date().toISOString(),counts,history}));
   }catch(e){} },250);
 }
 addEventListener("pagehide",()=>{ clearTimeout(saveT);
-  if(canStore){ try{localStorage.setItem(KEY,JSON.stringify({app:"copa2026",v:1,counts}));}catch(e){} }
+  if(canStore){ try{localStorage.setItem(KEY,JSON.stringify({app:"copa2026",v:1,counts,history}));}catch(e){} }
 });
 
 const cnt = id => counts[id]||0;
@@ -470,7 +491,7 @@ const cnt = id => counts[id]||0;
 const $=s=>document.querySelector(s);
 const album=$("#album");
 const secEl=new Map(), tileEl=new Map();
-const openByUser=new Set();
+const closedByUser=new Set();
 
 (function build(){
   const frag=document.createDocumentFragment();
@@ -487,13 +508,13 @@ const openByUser=new Set();
     sec.className="team"; sec.id="sec-"+s.key; sec.dataset.group=s.group;
     const pid="panel-"+s.key;
     sec.innerHTML=
-      '<button class="t-head" aria-expanded="false" aria-controls="'+pid+'">'+
+      '<button class="t-head" aria-expanded="true" aria-controls="'+pid+'">'+
         '<span class="t-flag" aria-hidden="true">'+s.flag+'</span>'+
         '<span class="t-info">'+
           '<span class="t-name">'+s.name+' <span class="code">'+s.code+'</span><span class="ok" hidden>✦ completa</span></span>'+
           '<span class="t-sub"><span class="t-bar"><i></i></span><span class="t-count">0/'+s.items.length+'</span></span>'+
         '</span><span class="t-chev">▼</span></button>'+
-      '<div class="grid" id="'+pid+'" hidden></div>';
+      '<div class="grid" id="'+pid+'"></div>';
     const grid=sec.querySelector(".grid");
     for (const it of s.items){
       const b=document.createElement("button");
@@ -502,10 +523,10 @@ const openByUser=new Set();
       grid.appendChild(b); tileEl.set(it.id,b);
     }
     sec.querySelector(".t-head").addEventListener("click",()=>{
-      const open=grid.hidden;
-      grid.hidden=!open;
+      const open=grid.classList.contains("hidden");
+      grid.classList.toggle("hidden",!open);
       sec.querySelector(".t-head").setAttribute("aria-expanded",String(open));
-      open ? openByUser.add(s.key) : openByUser.delete(s.key);
+      open ? closedByUser.delete(s.key) : closedByUser.add(s.key);
     });
     frag.appendChild(sec); secEl.set(s.key,sec);
   }
@@ -574,8 +595,8 @@ function applyView(){
     const e=secEl.get(s.key), n=vis.get(s.key), show=dflt||n>0;
     e.classList.toggle("hidden",!show);
     if(show){any=true;gShown.add(s.group);}
-    const open = dflt ? openByUser.has(s.key) : n>0;
-    e.querySelector(".grid").hidden=!open;
+    const open = dflt ? !closedByUser.has(s.key) : n>0;
+    e.querySelector(".grid").classList.toggle("hidden",!open);
     e.querySelector(".t-head").setAttribute("aria-expanded",String(open));
   }
   document.querySelectorAll(".gdiv").forEach(d=>d.classList.toggle("hidden",!gShown.has(d.dataset.group)));
@@ -619,6 +640,10 @@ function change(id,delta){
   const n=Math.max(0,Math.min(99,cnt(id)+delta));
   if (n===cnt(id)) return;
   if (n===0) delete counts[id]; else counts[id]=n;
+  if (delta>0){
+    history.push({id,t:Date.now()});
+    if (history.length>HIST_MAX) history.splice(0,history.length-HIST_MAX);
+  }
   paintTile(id); refreshStats(); save();
   if (navigator.vibrate) navigator.vibrate(8);
   const b=tileEl.get(id);
@@ -643,7 +668,30 @@ album.addEventListener("contextmenu",e=>{ if(e.target.closest(".slot")) e.preven
 
 /* ═══════════════════ 6 · MENU · BACKUP · LISTAS ═══════════════════ */
 const menu=$("#menu");
-$("#menuBtn").addEventListener("click",()=>menu.showModal());
+function timeAgo(t){
+  const min=Math.round((Date.now()-t)/60000);
+  if (min<1) return "agora";
+  if (min<60) return "há "+min+" min";
+  const h=Math.round(min/60);
+  if (h<24) return "há "+h+"h";
+  const d=Math.round(h/24);
+  if (d===1) return "ontem";
+  if (d<7) return "há "+d+"d";
+  return new Date(t).toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"});
+}
+function renderRecent(){
+  const box=$("#recentList"), empty=$("#recentEmpty");
+  const ultimas=history.slice(-15).reverse();
+  if (!ultimas.length){ box.innerHTML=""; empty.hidden=false; return; }
+  empty.hidden=true;
+  box.innerHTML=ultimas.map(h=>{
+    const it=byId.get(h.id); if(!it) return "";
+    return '<div class="recent-row"><span class="r-flag" aria-hidden="true">'+it.sec.flag+'</span>'+
+      '<span class="r-info"><b>'+label(it.id)+'</b>'+it.name+'</span>'+
+      '<span class="r-time">'+timeAgo(h.t)+'</span></div>';
+  }).join("");
+}
+$("#menuBtn").addEventListener("click",()=>{ renderRecent(); menu.showModal(); });
 menu.addEventListener("click",e=>{ if(e.target===menu) menu.close(); });
 
 function snack(msg){
@@ -692,7 +740,7 @@ $("#aShareDup").addEventListener("click",()=>shareList("dup"));
 
 /* backup */
 $("#aExport").addEventListener("click",()=>{
-  const data=JSON.stringify({app:"copa2026",v:1,savedAt:new Date().toISOString(),counts},null,1);
+  const data=JSON.stringify({app:"copa2026",v:1,savedAt:new Date().toISOString(),counts,history},null,1);
   const a=document.createElement("a");
   a.href=URL.createObjectURL(new Blob([data],{type:"application/json"}));
   a.download="copa2026-backup-"+new Date().toISOString().slice(0,10)+".json";
@@ -712,6 +760,9 @@ $("#importFile").addEventListener("change",e=>{
         counts=Object.create(null);
         for (const [id,v] of Object.entries(d.counts))
           if (byId.has(id)&&Number.isInteger(v)&&v>0) counts[id]=Math.min(v,99);
+        history=Array.isArray(d.history)
+          ? d.history.filter(h=>h&&byId.has(h.id)&&Number.isFinite(h.t)).slice(-HIST_MAX)
+          : [];
         for (const it of ALL) paintTile(it.id);
         refreshStats(); applyView(); save(); snack("Backup restaurado.");
       });
@@ -721,7 +772,7 @@ $("#importFile").addEventListener("change",e=>{
 $("#aReset").addEventListener("click",()=>{
   menu.close();
   confirmar("Zerar tudo","Isso apaga <b>todo o progresso</b> do álbum. Essa ação não pode ser desfeita.","Zerar tudo",()=>{
-    counts=Object.create(null);
+    counts=Object.create(null); history=[];
     for (const it of ALL) paintTile(it.id);
     refreshStats(); applyView(); save(); snack("Álbum zerado.");
   });
