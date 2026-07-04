@@ -221,9 +221,11 @@ dialog::backdrop{background:rgba(4,10,7,.6);-webkit-backdrop-filter:blur(3px);ba
 .sheet hr{border:0;border-top:1px solid var(--line);margin:6px 0}
 .sheet .note{font-size:11.5px;color:var(--faint);padding:10px 10px 2px;line-height:1.5}
 .recent{max-height:38vh;overflow-y:auto;-webkit-overflow-scrolling:touch;margin:2px 2px 4px}
-.recent-row{display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid var(--line)}
+.recent-row{display:flex;align-items:center;gap:9px;padding:8px 4px;border-bottom:1px solid var(--line)}
 .recent-row:last-child{border-bottom:0}
-.r-flag{flex:none;width:22px;text-align:center;font-size:17px}
+.r-act{flex:none;width:14px;text-align:center;font-size:15px;font-weight:800;color:var(--gold);line-height:1}
+.r-act.remove{color:var(--danger)}
+.r-flag{flex:none;width:20px;text-align:center;font-size:17px}
 .r-info{flex:1;min-width:0;font-size:13px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .r-info b{color:var(--gold);font-weight:800;margin-right:7px}
 .r-time{flex:none;font-size:11px;color:var(--faint);font-variant-numeric:tabular-nums}
@@ -301,7 +303,7 @@ dialog::backdrop{background:rgba(4,10,7,.6);-webkit-backdrop-filter:blur(3px);ba
 <dialog id="menu" aria-label="Backup e listas">
   <div class="sheet">
     <div class="grab"></div>
-    <h2>Últimas adicionadas</h2>
+    <h2>Atividade recente</h2>
     <div class="recent" id="recentList"></div>
     <p class="note" id="recentEmpty" hidden>Toque numa figurinha para começar a registrar sua atividade aqui.</p>
     <hr>
@@ -456,10 +458,15 @@ if (typeof document==="undefined") return; // permite teste em Node
 /* ═══════════════════════ 2 · ESTADO ═══════════════════════ */
 const KEY="copa2026-tracker-v1";
 const HIST_MAX=300;                       // teto de eventos guardados
+const CANCEL_WINDOW=120000;               // 2 min: add+remove (ou remove+add) da mesma figurinha se anulam
 let counts=Object.create(null);           // id -> nº de unidades
-let history=[];                           // {id,t} — registro de adições, mais antigo primeiro
+let history=[];                           // {id,t,action:"add"|"remove"} — mais antigo primeiro
 let canStore=false;
 try{ localStorage.setItem("__t","1"); localStorage.removeItem("__t"); canStore=true; }catch(e){}
+const normHist = arr => arr
+  .filter(h=>h && byId.has(h.id) && Number.isFinite(h.t))
+  .map(h=>({id:h.id,t:h.t,action:h.action==="remove"?"remove":"add"}))  // backups antigos = só "add"
+  .slice(-HIST_MAX);
 if (canStore){
   try{
     const raw=localStorage.getItem(KEY);
@@ -467,8 +474,7 @@ if (canStore){
       if (d && typeof d.counts==="object")
         for (const [id,v] of Object.entries(d.counts))
           if (byId.has(id) && Number.isInteger(v) && v>0) counts[id]=Math.min(v,99);
-      if (d && Array.isArray(d.history))
-        history=d.history.filter(h=>h && byId.has(h.id) && Number.isFinite(h.t)).slice(-HIST_MAX);
+      if (d && Array.isArray(d.history)) history=normHist(d.history);
     }
   }catch(e){ console.warn("Backup local ilegível",e); }
 } else document.getElementById("storeBanner").hidden=false;
@@ -636,14 +642,26 @@ document.querySelectorAll(".filters button").forEach(b=>b.addEventListener("clic
 
 /* ═══════════ 5 · INTERAÇÃO: toque = +1 · toque longo = −1 ═══════════ */
 const LP=430; let lpT=null,lpFired=false,px=0,py=0,lpTarget=null;
+
+/* log de atividade: se um add e um remove (em qualquer ordem) da MESMA
+   figurinha acontecem em menos de 2 min, tratamos como engano — o par
+   some do log e nenhum dos dois eventos aparece. */
+function logEvent(id,action){
+  const t=Date.now();
+  for (let i=history.length-1;i>=0;i--){
+    const h=history[i];
+    if (h.id!==id) continue;
+    if (h.action!==action && (t-h.t)<=CANCEL_WINDOW){ history.splice(i,1); return; } // anula o par
+    break; // evento mais recente dessa figurinha já resolvido (igual, ou oposto fora da janela)
+  }
+  history.push({id,t,action});
+  if (history.length>HIST_MAX) history.splice(0,history.length-HIST_MAX);
+}
 function change(id,delta){
   const n=Math.max(0,Math.min(99,cnt(id)+delta));
   if (n===cnt(id)) return;
   if (n===0) delete counts[id]; else counts[id]=n;
-  if (delta>0){
-    history.push({id,t:Date.now()});
-    if (history.length>HIST_MAX) history.splice(0,history.length-HIST_MAX);
-  }
+  logEvent(id, delta>0 ? "add" : "remove");
   paintTile(id); refreshStats(); save();
   if (navigator.vibrate) navigator.vibrate(8);
   const b=tileEl.get(id);
@@ -681,12 +699,16 @@ function timeAgo(t){
 }
 function renderRecent(){
   const box=$("#recentList"), empty=$("#recentEmpty");
-  const ultimas=history.slice(-15).reverse();
+  const ultimas=history.slice(-20).reverse();
   if (!ultimas.length){ box.innerHTML=""; empty.hidden=false; return; }
   empty.hidden=true;
   box.innerHTML=ultimas.map(h=>{
     const it=byId.get(h.id); if(!it) return "";
-    return '<div class="recent-row"><span class="r-flag" aria-hidden="true">'+it.sec.flag+'</span>'+
+    const rem=h.action==="remove";
+    const rotulo=(rem?"Removida":"Adicionada")+": "+label(it.id)+" "+it.name+", "+timeAgo(h.t);
+    return '<div class="recent-row" aria-label="'+rotulo+'">'+
+      '<span class="r-act'+(rem?" remove":"")+'" aria-hidden="true">'+(rem?"−":"+")+'</span>'+
+      '<span class="r-flag" aria-hidden="true">'+it.sec.flag+'</span>'+
       '<span class="r-info"><b>'+label(it.id)+'</b>'+it.name+'</span>'+
       '<span class="r-time">'+timeAgo(h.t)+'</span></div>';
   }).join("");
@@ -760,9 +782,7 @@ $("#importFile").addEventListener("change",e=>{
         counts=Object.create(null);
         for (const [id,v] of Object.entries(d.counts))
           if (byId.has(id)&&Number.isInteger(v)&&v>0) counts[id]=Math.min(v,99);
-        history=Array.isArray(d.history)
-          ? d.history.filter(h=>h&&byId.has(h.id)&&Number.isFinite(h.t)).slice(-HIST_MAX)
-          : [];
+        history=Array.isArray(d.history) ? normHist(d.history) : [];
         for (const it of ALL) paintTile(it.id);
         refreshStats(); applyView(); save(); snack("Backup restaurado.");
       });
