@@ -237,6 +237,45 @@ dialog::backdrop{background:rgba(4,10,7,.6);-webkit-backdrop-filter:blur(3px);ba
 .confirm .row button.primary{background:var(--gold);border-color:var(--gold);color:var(--gold-ink)}
 .confirm .row button.danger{background:var(--danger);border-color:var(--danger);color:#2b0d09}
 
+/* ── Tela: Histórico completo de adições ────────────────────────── */
+.screen{position:fixed;inset:0;z-index:55;background:var(--bg);display:flex;flex-direction:column}
+.screen.hidden{display:none}
+.log-head{
+  display:flex;align-items:center;gap:12px;flex:none;
+  padding:calc(12px + env(safe-area-inset-top)) var(--pad) 12px;border-bottom:1px solid var(--line);
+  background:rgba(11,26,18,.9);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
+}
+.log-back{
+  flex:none;width:38px;height:38px;border-radius:12px;border:1px solid var(--line-strong);
+  background:var(--surface);font-size:18px;display:grid;place-items:center;color:var(--ink);
+}
+.log-head h1{font-size:16.5px;font-weight:800}
+.log-body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:16px var(--pad) calc(28px + env(safe-area-inset-bottom))}
+
+.log-stats{display:grid;grid-template-columns:repeat(2,1fr);gap:9px;margin-bottom:20px}
+.log-stat{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-slot);padding:11px 13px}
+.log-stat b{display:block;font-size:21px;font-weight:800;color:var(--gold);line-height:1.25;font-variant-numeric:tabular-nums}
+.log-stat span{font-size:11px;color:var(--muted)}
+
+.log-chart-title{font-size:12.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;margin-bottom:10px}
+.log-chart-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 calc(var(--pad)*-1);padding:0 var(--pad) 6px 12px}
+.log-chart{display:flex;align-items:flex-end;gap:7px;height:110px}
+.lc-col{flex:none;width:20px;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:7px}
+.lc-bar{width:14px;border-radius:5px 5px 2px 2px;background:linear-gradient(180deg,var(--gold),var(--gold-2));min-height:4px}
+.lc-bar.zero{width:10px;min-height:8px;background:transparent;border:1.5px dashed var(--line-strong);border-radius:4px}
+.lc-day{font-size:9px;color:var(--faint);white-space:nowrap}
+
+.log-group{margin-top:22px}
+.log-group h3{font-size:12.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;margin:0 2px 4px}
+.log-row{display:flex;align-items:center;gap:10px;padding:9px 4px;border-bottom:1px solid var(--line)}
+.log-row:last-child{border-bottom:0}
+.log-time{flex:none;width:36px;font-size:11px;color:var(--faint);font-variant-numeric:tabular-nums}
+.log-flag{flex:none;width:20px;text-align:center;font-size:17px}
+.log-info{flex:1;min-width:0;font-size:13px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.log-info b{color:var(--gold);font-weight:800;margin-right:7px}
+.log-empty{text-align:center;color:var(--muted);font-size:14px;padding:60px 20px}
+.log-empty b{color:var(--ink)}
+
 /* ── Snackbar ────────────────────────────────────────────────────── */
 #snack{
   position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom));transform:translate(-50%,20px);
@@ -298,6 +337,14 @@ dialog::backdrop{background:rgba(4,10,7,.6);-webkit-backdrop-filter:blur(3px);ba
 
 <main id="album" aria-live="polite"></main>
 
+<section id="logScreen" class="screen hidden" aria-label="Histórico completo de adições">
+  <div class="log-head">
+    <button class="log-back" id="logBack" aria-label="Voltar ao álbum">←</button>
+    <h1>Histórico completo</h1>
+  </div>
+  <div class="log-body" id="logBody"></div>
+</section>
+
 <div id="snack" role="status"></div>
 
 <dialog id="menu" aria-label="Backup e listas">
@@ -306,6 +353,7 @@ dialog::backdrop{background:rgba(4,10,7,.6);-webkit-backdrop-filter:blur(3px);ba
     <h2>Atividade recente</h2>
     <div class="recent" id="recentList"></div>
     <p class="note" id="recentEmpty" hidden>Toque numa figurinha para começar a registrar sua atividade aqui.</p>
+    <button class="act" id="aFullLog"><span class="i">📊</span>Histórico completo &amp; métricas por dia</button>
     <hr>
     <h2>Backup &amp; listas de troca</h2>
     <button class="act" id="aShareMiss"><span class="i">📋</span>Compartilhar lista de faltantes</button>
@@ -457,7 +505,7 @@ if (typeof document==="undefined") return; // permite teste em Node
 
 /* ═══════════════════════ 2 · ESTADO ═══════════════════════ */
 const KEY="copa2026-tracker-v1";
-const HIST_MAX=300;                       // teto de eventos guardados
+const HIST_MAX=5000;                      // teto generoso p/ o histórico ser de fato "completo"
 const CANCEL_WINDOW=120000;               // 2 min: add+remove (ou remove+add) da mesma figurinha se anulam
 let counts=Object.create(null);           // id -> nº de unidades
 let history=[];                           // {id,t,action:"add"|"remove"} — mais antigo primeiro
@@ -715,6 +763,84 @@ function renderRecent(){
 }
 $("#menuBtn").addEventListener("click",()=>{ renderRecent(); menu.showModal(); });
 menu.addEventListener("click",e=>{ if(e.target===menu) menu.close(); });
+
+/* ── Tela: Histórico completo de adições + métricas por dia ─────── */
+const WD=["dom","seg","ter","qua","qui","sex","sáb"];
+const dayKey  = t => { const d=new Date(t); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); };
+const dayFromKey = k => { const [y,m,d]=k.split("-").map(Number); return new Date(y,m-1,d); };
+const fmtDay = dt => String(dt.getDate()).padStart(2,"0")+"/"+String(dt.getMonth()+1).padStart(2,"0");
+function dayLabel(k,todayKey,yestKey){
+  if (k===todayKey) return "Hoje";
+  if (k===yestKey) return "Ontem";
+  const dt=dayFromKey(k);
+  return WD[dt.getDay()]+", "+fmtDay(dt);
+}
+function renderFullLog(){
+  const body=$("#logBody");
+  const adds=history.filter(h=>h.action==="add").slice().sort((a,b)=>a.t-b.t); // só adições, cronológico
+
+  if (!adds.length){
+    body.innerHTML='<p class="log-empty">Nenhuma figurinha adicionada ainda.<br><b>Toque numa figurinha no álbum para começar.</b></p>';
+    return;
+  }
+
+  const byDay=new Map();
+  for (const h of adds){
+    const k=dayKey(h.t);
+    if (!byDay.has(k)) byDay.set(k,[]);
+    byDay.get(k).push(h);
+  }
+
+  const total=adds.length, diasAtivos=byDay.size;
+  const media=(total/diasAtivos).toFixed(1).replace(".",",");
+  let melhorKey=null, melhorQtd=0;
+  for (const [k,evts] of byDay) if (evts.length>melhorQtd){ melhorQtd=evts.length; melhorKey=k; }
+  const melhorDt=dayFromKey(melhorKey);
+
+  const now=Date.now(), todayKey=dayKey(now), yestKey=dayKey(now-86400000);
+
+  // gráfico: cada dia entre o 1º e o último registro — inclui dias sem adição (barra vazia)
+  const firstDt=dayFromKey(dayKey(adds[0].t)), lastDt=dayFromKey(dayKey(adds[adds.length-1].t));
+  const chartDays=[];
+  for (let d=new Date(firstDt); d<=lastDt; d.setDate(d.getDate()+1)){
+    const k=dayKey(d.getTime());
+    chartDays.push({n:(byDay.get(k)||[]).length, dt:new Date(d)});
+  }
+  const maxN=Math.max(1,...chartDays.map(c=>c.n));
+  const chartHtml=chartDays.map(c=>
+    '<div class="lc-col">'+
+      (c.n>0
+        ? '<div class="lc-bar" style="height:'+Math.max(6,Math.round(c.n/maxN*100))+'%" title="'+fmtDay(c.dt)+': '+c.n+'"></div>'
+        : '<div class="lc-bar zero" title="'+fmtDay(c.dt)+': 0"></div>')+
+      '<span class="lc-day">'+fmtDay(c.dt)+'</span>'+
+    '</div>'
+  ).join("");
+
+  // lista completa agrupada por dia, mais recente primeiro
+  const listHtml=[...byDay.keys()].sort().reverse().map(k=>{
+    const rows=byDay.get(k).slice().sort((a,b)=>b.t-a.t).map(h=>{
+      const it=byId.get(h.id); if(!it) return "";
+      const hh=new Date(h.t), hm=String(hh.getHours()).padStart(2,"0")+":"+String(hh.getMinutes()).padStart(2,"0");
+      return '<div class="log-row"><span class="log-time">'+hm+'</span>'+
+        '<span class="log-flag" aria-hidden="true">'+it.sec.flag+'</span>'+
+        '<span class="log-info"><b>'+label(it.id)+'</b>'+it.name+'</span></div>';
+    }).join("");
+    return '<div class="log-group"><h3>'+dayLabel(k,todayKey,yestKey)+' · '+byDay.get(k).length+'</h3>'+rows+'</div>';
+  }).join("");
+
+  body.innerHTML=
+    '<div class="log-stats">'+
+      '<div class="log-stat"><b>'+total+'</b><span>figurinhas adicionadas</span></div>'+
+      '<div class="log-stat"><b>'+diasAtivos+'</b><span>dias com atividade</span></div>'+
+      '<div class="log-stat"><b>'+media+'</b><span>média por dia ativo</span></div>'+
+      '<div class="log-stat"><b>'+melhorQtd+'</b><span>melhor dia · '+fmtDay(melhorDt)+'</span></div>'+
+    '</div>'+
+    '<p class="log-chart-title">Adições por dia</p>'+
+    '<div class="log-chart-wrap"><div class="log-chart">'+chartHtml+'</div></div>'+
+    listHtml;
+}
+$("#aFullLog").addEventListener("click",()=>{ menu.close(); renderFullLog(); $("#logScreen").classList.remove("hidden"); });
+$("#logBack").addEventListener("click",()=>$("#logScreen").classList.add("hidden"));
 
 function snack(msg){
   const s=$("#snack"); s.textContent=msg; s.classList.add("show");
